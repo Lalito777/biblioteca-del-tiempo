@@ -5,7 +5,17 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 const MAX_SIZE_MB = 5;
-const TIPOS_PERMITIDOS = ["image/jpeg", "image/png", "image/webp"];
+const MAX_TITULO = 120;
+const MAX_MARCA = 60;
+const MAX_DESCRIPCION = 2000;
+
+// La extensión se deduce del tipo real del archivo, nunca de su nombre:
+// un nombre como "foto.jpg.html" no debe terminar guardado como .html.
+const TIPOS_PERMITIDOS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
 
 export default function SubirPublicacion({ userId }: { userId: string }) {
   const [titulo, setTitulo] = useState("");
@@ -20,7 +30,7 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!TIPOS_PERMITIDOS.includes(file.type)) {
+    if (!TIPOS_PERMITIDOS[file.type]) {
       setError("Solo se permiten imágenes JPG, PNG o WEBP.");
       setArchivo(null);
       return;
@@ -46,12 +56,20 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
     setError("");
     const supabase = createClient();
 
-    const ext = archivo.name.split(".").pop();
-    const path = `${userId}/${Date.now()}.${ext}`;
+    const ext = TIPOS_PERMITIDOS[archivo.type];
+    if (!ext) {
+      setError("Tipo de archivo no permitido.");
+      setLoading(false);
+      return;
+    }
+
+    // La carpeta debe ser el id del usuario: así lo exige la política
+    // de Storage, que impide escribir en la carpeta de otra persona.
+    const path = `${userId}/${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
 
     const { error: uploadError } = await supabase.storage
       .from("relojes-fotos")
-      .upload(path, archivo);
+      .upload(path, archivo, { contentType: archivo.type, upsert: false });
 
     if (uploadError) {
       setError("Error subiendo la imagen: " + uploadError.message);
@@ -63,18 +81,26 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
 
     const { error: insertError } = await supabase.from("publicaciones").insert({
       user_id: userId,
-      titulo,
-      marca,
-      descripcion,
+      titulo: titulo.trim(),
+      marca: marca.trim() || null,
+      descripcion: descripcion.trim() || null,
       imagen_url: urlData.publicUrl,
     });
 
-    setLoading(false);
-
     if (insertError) {
-      setError("Error guardando la publicación: " + insertError.message);
+      // La foto ya se subió pero la publicación falló: borramos la
+      // imagen para no dejar archivos huérfanos ocupando espacio.
+      await supabase.storage.from("relojes-fotos").remove([path]);
+      setLoading(false);
+      setError(
+        insertError.message.includes("row-level security")
+          ? "Has publicado demasiado en poco tiempo. Espera un rato e intenta de nuevo."
+          : "Error guardando la publicación: " + insertError.message
+      );
       return;
     }
+
+    setLoading(false);
 
     setTitulo("");
     setMarca("");
@@ -106,6 +132,7 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
         value={titulo}
         onChange={(e) => setTitulo(e.target.value)}
         required
+        maxLength={MAX_TITULO}
         style={inputStyle}
       />
       <input
@@ -113,6 +140,7 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
         placeholder="Marca"
         value={marca}
         onChange={(e) => setMarca(e.target.value)}
+        maxLength={MAX_MARCA}
         style={inputStyle}
       />
       <textarea
@@ -120,6 +148,7 @@ export default function SubirPublicacion({ userId }: { userId: string }) {
         value={descripcion}
         onChange={(e) => setDescripcion(e.target.value)}
         rows={3}
+        maxLength={MAX_DESCRIPCION}
         style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }}
       />
       <input

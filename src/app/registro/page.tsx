@@ -9,19 +9,28 @@ export default function RegistroPage() {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [error, setError] = useState("");
+  const [aviso, setAviso] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setAviso("");
+
+    const user = username.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,20}$/.test(user)) {
+      setError("El nombre de usuario debe tener entre 3 y 20 caracteres, solo letras, números y guion bajo.");
+      return;
+    }
+
     setLoading(true);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { username } },
+      options: { data: { username: user } },
     });
 
     setLoading(false);
@@ -34,6 +43,16 @@ export default function RegistroPage() {
       } else {
         setError(error.message);
       }
+      return;
+    }
+
+    // Si Supabase tiene activada la confirmación por correo, no hay
+    // sesión todavía: mandarlo al muro lo dejaría sin entender por qué
+    // no puede publicar.
+    if (!data.session) {
+      setAviso(
+        "Cuenta creada. Te enviamos un correo de confirmación: ábrelo para activar tu cuenta y luego inicia sesión."
+      );
       return;
     }
 
@@ -62,10 +81,12 @@ export default function RegistroPage() {
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           <input
             type="text"
-            placeholder="Nombre de usuario"
+            placeholder="Nombre de usuario (a-z, 0-9, _)"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
+            minLength={3}
+            maxLength={20}
             style={inputStyle}
           />
           <input
@@ -87,6 +108,7 @@ export default function RegistroPage() {
           />
 
           {error && <p style={{ color: "#E05050", fontSize: "0.85rem" }}>{error}</p>}
+          {aviso && <p style={{ color: "#C9A84C", fontSize: "0.85rem", lineHeight: 1.5 }}>{aviso}</p>}
 
           <button type="submit" disabled={loading} style={buttonStyle}>
             {loading ? "Creando cuenta..." : "Crear cuenta"}
